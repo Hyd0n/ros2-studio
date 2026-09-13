@@ -14,3 +14,15 @@ Install the Linux development dependencies from the repository root:
 
 ```sh
 script/linux
+```
+
+## Development build
+
+Build and run the editor from the repository root:
+
+```sh
+cargo run
+```
+
+The M00 bootstrap milestone is validated when the editor window opens
+successfully. Stop the development instance with `Ctrl+C` in the terminal.
