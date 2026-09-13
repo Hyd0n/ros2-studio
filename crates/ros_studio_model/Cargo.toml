@@ -11,3 +11,9 @@ workspace = true
 [lib]
 path = "src/ros_studio_model.rs"
 doctest = false
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
