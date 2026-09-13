@@ -15455,6 +15455,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "ros_studio_daemon"
+version = "0.1.0"
+dependencies = [
+ "ros_studio_model",
+ "ros_studio_protocol",
+]
+
+[[package]]
+name = "ros_studio_model"
+version = "0.1.0"
+
+[[package]]
+name = "ros_studio_protocol"
+version = "0.1.0"
+dependencies = [
+ "ros_studio_model",
+]
+
+[[package]]
+name = "ros_studio_scan"
+version = "0.1.0"
+dependencies = [
+ "ros_studio_model",
+]
+
+[[package]]
+name = "ros_studio_zed"
+version = "0.1.0"
+dependencies = [
+ "ros_studio_model",
+ "ros_studio_protocol",
+ "ros_studio_scan",
+]
+
+[[package]]
 name = "roughr-merman"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
