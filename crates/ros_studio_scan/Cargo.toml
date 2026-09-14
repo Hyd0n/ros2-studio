@@ -16,4 +16,9 @@ doctest = false
 anyhow.workspace = true
 quick-xml.workspace = true
 ros_studio_model.workspace = true
+tree-sitter.workspace = true
+tree-sitter-rust.workspace = true
 walkdir.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
