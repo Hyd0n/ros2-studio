@@ -13,4 +13,7 @@ path = "src/ros_studio_scan.rs"
 doctest = false
 
 [dependencies]
+anyhow.workspace = true
+quick-xml.workspace = true
 ros_studio_model.workspace = true
+walkdir.workspace = true
