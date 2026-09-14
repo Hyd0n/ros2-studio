@@ -7,9 +7,15 @@ use std::{
 
 use anyhow::Context as _;
 use quick_xml::{Reader, events::Event};
-use ros_studio_model::{EntityId, Package};
+use ros_studio_model::{EntityId, Package, Project};
 use walkdir::{DirEntry, WalkDir};
 
+mod rust_scan;
+
+pub use rust_scan::{
+    DetectedRustEndpoint, DetectedRustNode, detect_rust_endpoints, detect_rust_nodes,
+    scan_rust_source,
+};
 const IGNORED_DIRECTORIES: [&str; 5] = [".git", "build", "install", "log", "target"];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,6 +123,60 @@ pub fn scan_workspace(root: &Path) -> anyhow::Result<Vec<DetectedPackage>> {
     packages.sort_by(|left, right| left.package.cmp(&right.package));
 
     Ok(packages)
+}
+
+pub fn scan_project(root: &Path, project_name: &str) -> anyhow::Result<Project> {
+    let detected_packages = scan_workspace(root)?;
+    let mut packages = Vec::with_capacity(detected_packages.len());
+    let mut nodes = Vec::new();
+
+    for detected_package in detected_packages {
+        let package = detected_package.package;
+        let executable = package.name.clone();
+
+        for source_path in detected_package.rust_source_paths {
+            let source = fs::read_to_string(&source_path)
+                .with_context(|| format!("failed to read Rust source {}", source_path.display()))?;
+
+            let relative_source_path = source_path.strip_prefix(root).with_context(|| {
+                format!(
+                    "{} is outside workspace {}",
+                    source_path.display(),
+                    root.display()
+                )
+            })?;
+
+            let relative_source_path = normalized_path(relative_source_path)?;
+
+            nodes.extend(scan_rust_source(
+                &package,
+                &executable,
+                &source,
+                &relative_source_path,
+            )?);
+        }
+
+        packages.push(package);
+    }
+
+    let mut project = Project {
+        id: EntityId::new(format!("project:{project_name}")),
+        name: project_name.to_owned(),
+        root_path: normalized_path(root)?,
+        packages,
+        nodes,
+    };
+
+    project.sort_deterministically();
+
+    Ok(project)
+}
+
+fn normalized_path(path: &Path) -> anyhow::Result<String> {
+    Ok(path
+        .to_str()
+        .with_context(|| format!("path is not valid UTF-8: {}", path.display()))?
+        .replace('\\', "/"))
 }
 
 fn parse_package_name(xml: &str) -> Result<Option<String>, quick_xml::Error> {
@@ -234,6 +294,57 @@ mod tests {
         let sources = find_rust_sources(&package_root)?;
 
         assert_eq!(sources, vec![package_root.join("src/camera.rs")]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn scans_fixture_into_project_graph() -> anyhow::Result<()> {
+        let workspace = fixture_workspace();
+        let project = scan_project(&workspace, "drone_demo_ws")?;
+
+        assert_eq!(project.id.as_str(), "project:drone_demo_ws");
+        assert_eq!(project.name, "drone_demo_ws");
+        assert_eq!(project.packages.len(), 4);
+        assert_eq!(project.nodes.len(), 4);
+
+        let graph = project
+            .nodes
+            .iter()
+            .map(|node| {
+                let topics = node
+                    .endpoints
+                    .iter()
+                    .map(|endpoint| endpoint.name.as_str())
+                    .collect::<Vec<_>>();
+
+                (node.logical_name.as_str(), topics)
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            graph,
+            [
+                ("autopilot_bridge", vec!["/cmd_vel"]),
+                ("camera", vec!["/camera/image"]),
+                ("detector", vec!["/detections", "/camera/image"]),
+                ("navigation", vec!["/cmd_vel", "/detections"]),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn project_graph_matches_golden() -> anyhow::Result<()> {
+        let workspace = fixture_workspace();
+        let mut project = scan_project(&workspace, "drone_demo_ws")?;
+        project.root_path = "$WORKSPACE".to_owned();
+
+        let actual = serde_json::to_string_pretty(&project)?;
+        let expected = include_str!("../../../examples/drone_demo_ws/expected_graph.json");
+
+        assert_eq!(actual, expected.trim_end());
 
         Ok(())
     }

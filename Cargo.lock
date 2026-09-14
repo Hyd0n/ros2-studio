@@ -15484,6 +15484,9 @@ dependencies = [
  "anyhow",
  "quick-xml 0.41.0",
  "ros_studio_model",
+ "serde_json",
+ "tree-sitter",
+ "tree-sitter-rust",
  "walkdir",
 ]
 
