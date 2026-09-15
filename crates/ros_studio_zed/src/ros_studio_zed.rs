@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Render, SharedString, Window,
-    actions, canvas, point,
+    App, Bounds, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, Pixels, Render, ScrollDelta,
+    ScrollWheelEvent, SharedString, Window, actions, canvas, point,
 };
 use ros_studio_model::{EndpointKind, Project};
 use ui::{Button, Headline, HeadlineSize, Label, LabelSize, prelude::*};
@@ -18,9 +18,11 @@ const FIXTURE_GRAPH: &str = include_str!("../../../examples/drone_demo_ws/expect
 const MINIMUM_ZOOM_PERCENT: u16 = 75;
 const MAXIMUM_ZOOM_PERCENT: u16 = 150;
 const ZOOM_STEP_PERCENT: u16 = 25;
-const GRAPH_WIDTH: f32 = 1_100.0;
+const WHEEL_ZOOM_STEP_PERCENT: u16 = 10;
+#[cfg(test)]
 const GRAPH_MINIMUM_HEIGHT: f32 = 720.0;
 const GRAPH_TOP_PADDING: f32 = 64.0;
+#[cfg(test)]
 const GRAPH_BOTTOM_PADDING: f32 = 64.0;
 const GRAPH_ROW_GAP: f32 = 120.0;
 const GRAPH_DOT_SPACING: f32 = 32.0;
@@ -111,6 +113,7 @@ pub struct RosGraph {
     canvas_pan: Option<GraphCanvasPan>,
     camera_offset_x: f32,
     camera_offset_y: f32,
+    canvas_bounds: Option<Bounds<Pixels>>,
     zoom_percent: u16,
     focus_handle: FocusHandle,
 }
@@ -133,18 +136,13 @@ impl RosGraph {
             canvas_pan: None,
             camera_offset_x: 0.0,
             camera_offset_y: 0.0,
+            canvas_bounds: None,
             zoom_percent: 100,
             focus_handle: cx.focus_handle(),
         }
     }
 
-    fn apply_drag_position(
-        &mut self,
-        mouse_x: f32,
-        mouse_y: f32,
-        zoom_scale: f32,
-        canvas_logical_height: f32,
-    ) -> bool {
+    fn apply_drag_position(&mut self, mouse_x: f32, mouse_y: f32, zoom_scale: f32) -> bool {
         if let Some(node_drag) = self.node_drag.clone() {
             let horizontal_delta = (mouse_x - node_drag.mouse_start_x) / zoom_scale;
             let vertical_delta = (mouse_y - node_drag.mouse_start_y) / zoom_scale;
@@ -156,22 +154,77 @@ impl RosGraph {
                 return false;
             };
 
-            layout.x = (node_drag.node_start_x + horizontal_delta)
-                .clamp(16.0, GRAPH_WIDTH - NODE_CARD_WIDTH - 16.0);
-            layout.y = (node_drag.node_start_y + vertical_delta)
-                .clamp(16.0, canvas_logical_height - NODE_CARD_HEIGHT - 16.0);
+            layout.x = node_drag.node_start_x + horizontal_delta;
+            layout.y = node_drag.node_start_y + vertical_delta;
             true
         } else if let Some(canvas_pan) = self.canvas_pan {
             let horizontal_delta = mouse_x - canvas_pan.mouse_start_x;
             let vertical_delta = mouse_y - canvas_pan.mouse_start_y;
-            self.camera_offset_x =
-                (canvas_pan.camera_start_x + horizontal_delta).clamp(-GRAPH_WIDTH, GRAPH_WIDTH);
-            self.camera_offset_y = (canvas_pan.camera_start_y + vertical_delta)
-                .clamp(-canvas_logical_height, canvas_logical_height);
+            self.camera_offset_x = canvas_pan.camera_start_x + horizontal_delta;
+            self.camera_offset_y = canvas_pan.camera_start_y + vertical_delta;
             true
         } else {
             false
         }
+    }
+
+    fn set_zoom_percent(
+        &mut self,
+        zoom_percent: u16,
+        zoom_center: Option<gpui::Point<Pixels>>,
+    ) -> bool {
+        let zoom_percent = zoom_percent.clamp(MINIMUM_ZOOM_PERCENT, MAXIMUM_ZOOM_PERCENT);
+        if zoom_percent == self.zoom_percent {
+            return false;
+        }
+
+        if let Some((zoom_center, canvas_bounds)) = zoom_center.zip(self.canvas_bounds) {
+            let old_zoom_scale = f32::from(self.zoom_percent) / 100.0;
+            let new_zoom_scale = f32::from(zoom_percent) / 100.0;
+            let local_center_x = (zoom_center.x - canvas_bounds.origin.x).as_f32();
+            let local_center_y = (zoom_center.y - canvas_bounds.origin.y).as_f32();
+            let graph_center_x = (local_center_x - self.camera_offset_x) / old_zoom_scale;
+            let graph_center_y = (local_center_y - self.camera_offset_y) / old_zoom_scale;
+
+            self.camera_offset_x = local_center_x - graph_center_x * new_zoom_scale;
+            self.camera_offset_y = local_center_y - graph_center_y * new_zoom_scale;
+        }
+
+        self.zoom_percent = zoom_percent;
+        true
+    }
+
+    fn handle_scroll_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let vertical_delta = match event.delta {
+            ScrollDelta::Pixels(delta) => delta.y.as_f32(),
+            ScrollDelta::Lines(delta) => delta.y,
+        };
+        if vertical_delta == 0.0 {
+            return;
+        }
+
+        let step = if event.delta.precise() {
+            (vertical_delta.abs() * 0.2)
+                .round()
+                .clamp(1.0, f32::from(WHEEL_ZOOM_STEP_PERCENT)) as u16
+        } else {
+            WHEEL_ZOOM_STEP_PERCENT
+        };
+        let zoom_percent = if vertical_delta > 0.0 {
+            self.zoom_percent.saturating_add(step)
+        } else {
+            self.zoom_percent.saturating_sub(step)
+        };
+
+        if self.set_zoom_percent(zoom_percent, Some(event.position)) {
+            cx.notify();
+        }
+        cx.stop_propagation();
     }
 }
 
@@ -309,6 +362,7 @@ fn graph_layout(project: &Project, edges: &[GraphEdge]) -> Vec<GraphNodeLayout> 
         .collect()
 }
 
+#[cfg(test)]
 fn graph_height(node_count: usize) -> f32 {
     let row_count = node_count.max(1).div_ceil(2);
     (GRAPH_TOP_PADDING
@@ -428,7 +482,6 @@ impl Render for RosGraph {
                         edge_geometry(edge, &node_layouts).map(|geometry| (edge.clone(), geometry))
                     })
                     .collect::<Vec<_>>();
-                let canvas_logical_height = graph_height(project.nodes.len());
                 let node_width = px(NODE_CARD_WIDTH * zoom_scale);
                 let node_height = px(NODE_CARD_HEIGHT * zoom_scale);
                 let camera_offset_x = self.camera_offset_x;
@@ -447,6 +500,7 @@ impl Render for RosGraph {
                 let node_background = cx.theme().colors().surface_background;
                 let node_hover_background = cx.theme().colors().element_hover.opacity(0.55);
                 let port_color = cx.theme().colors().icon_accent;
+                let graph_entity = cx.entity();
 
                 content
                     .child(
@@ -542,6 +596,7 @@ impl Render for RosGraph {
                                     .when(self.canvas_pan.is_some(), |canvas| {
                                         canvas.cursor_grabbing()
                                     })
+                                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
                                     .on_mouse_down(
                                         MouseButton::Left,
                                         cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -566,7 +621,6 @@ impl Render for RosGraph {
                                                 event.position.x.as_f32(),
                                                 event.position.y.as_f32(),
                                                 zoom_scale,
-                                                canvas_logical_height,
                                             ) {
                                                 cx.notify();
                                             }
@@ -579,7 +633,6 @@ impl Render for RosGraph {
                                                 event.position.x.as_f32(),
                                                 event.position.y.as_f32(),
                                                 zoom_scale,
-                                                canvas_logical_height,
                                             );
                                             this.node_drag = None;
                                             this.canvas_pan = None;
@@ -593,7 +646,6 @@ impl Render for RosGraph {
                                                 event.position.x.as_f32(),
                                                 event.position.y.as_f32(),
                                                 zoom_scale,
-                                                canvas_logical_height,
                                             );
                                             this.node_drag = None;
                                             this.canvas_pan = None;
@@ -606,7 +658,11 @@ impl Render for RosGraph {
                                     }))
                                     .child(
                                         canvas(
-                                            |_, _, _| {},
+                                            move |bounds, _, cx| {
+                                                graph_entity.update(cx, |this, _| {
+                                                    this.canvas_bounds = Some(bounds);
+                                                });
+                                            },
                                             {
                                                 let edge_geometries = edge_geometries.clone();
                                                 move |bounds, _, window, _| {
