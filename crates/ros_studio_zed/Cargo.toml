@@ -13,6 +13,10 @@ path = "src/ros_studio_zed.rs"
 doctest = false
 
 [dependencies]
+gpui.workspace = true
 ros_studio_model.workspace = true
 ros_studio_protocol.workspace = true
 ros_studio_scan.workspace = true
+serde_json.workspace = true
+ui.workspace = true
+workspace.workspace = true

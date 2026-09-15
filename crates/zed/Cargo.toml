@@ -191,6 +191,7 @@ repl.workspace = true
 reqwest.workspace = true
 reqwest_client.workspace = true
 rope.workspace = true
+ros_studio_zed.workspace = true
 sandbox.workspace = true
 search.workspace = true
 serde.workspace = true

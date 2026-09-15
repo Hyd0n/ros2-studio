@@ -15494,9 +15494,13 @@ dependencies = [
 name = "ros_studio_zed"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "ros_studio_model",
  "ros_studio_protocol",
  "ros_studio_scan",
+ "serde_json",
+ "ui",
+ "workspace",
 ]
 
 [[package]]
@@ -22950,6 +22954,7 @@ dependencies = [
  "repl",
  "reqwest_client",
  "rope",
+ "ros_studio_zed",
  "sandbox",
  "search",
  "semver",
